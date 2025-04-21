@@ -1037,14 +1037,20 @@ class Reconciler:
                 member_ifname, member_iface = interface.get_by_name(
                     self.cfg, member_ifname
                 )
-                member_iface = self.vpp.get_interface_by_name(member_ifname)
-                if not member_iface or member_ifname not in vpp_members:
+                member_vpp_iface = self.vpp.get_interface_by_name(member_ifname)
+                # NEW: Ensure member interface is up before adding to bond
+                if member_vpp_iface and interface.get_admin_state(self.cfg, member_ifname) == 1:
+                    if not (member_vpp_iface.flags & 1):  # IF_STATUS_API_FLAG_ADMIN_UP
+                        cli = f"set interface state {member_ifname} up"
+                        self.cli["sync"].append(cli)
+                # MODIFIED: Add member to bond after ensuring it's up
+                if not member_ifname in vpp_members:
                     if (
                         len(vpp_members) == 0
-                        and member_iface
-                        and member_iface.l2_address != "00:00:00:00:00:00"
+                        and member_vpp_iface
+                        and member_vpp_iface.l2_address != "00:00:00:00:00:00"
                     ):
-                        bondmac = member_iface.l2_address
+                        bondmac = member_vpp_iface.l2_address
                     cli = f"bond add {config_bond_ifname} {member_ifname}"
                     self.cli["sync"].append(cli)
             if (
