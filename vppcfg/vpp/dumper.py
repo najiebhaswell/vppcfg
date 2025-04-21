@@ -125,6 +125,7 @@ class Dumper(VPPApi):
                     "dpdk",
                     "virtio",
                     "pg",
+                    "onp",
                 ]:
                     i = {"description": ""}
                     if iface.sw_if_index in self.cache["lcps"]:
@@ -155,10 +156,11 @@ class Dumper(VPPApi):
                         i["state"] = "down"
 
                     if (
-                        iface.interface_dev_type == "dpdk"
+                        iface.interface_dev_type in ["dpdk", "onp"]
                         and iface.sub_number_of_tags == 0
                     ):
                         i["mac"] = str(iface.l2_address)
+                        i["device-type"] = iface.interface_dev_type
 
                     if self.tap_is_lcp(iface.interface_name):
                         continue
