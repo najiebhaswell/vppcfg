@@ -264,7 +264,7 @@ class VPPApi:
         )
         ## Add mock PHYs
         for ifname, iface in yaml_config["interfaces"].items():
-            if not "device-type" in iface or iface["device-type"] not in ["dpdk"]:
+            if not "device-type" in iface or iface["device-type"] not in ["dpdk", "onp"]:
                 continue
             idx += 1
             self.cache["interfaces"][idx] = self.vpp_messages[
