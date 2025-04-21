@@ -940,6 +940,8 @@ class Reconciler:
     def sync(self):
         """Synchronize the VPP Dataplane configuration for all objects in the config"""
         ret = True
+        # Track interfaces that have been activated to avoid duplicates
+        self.activated_interfaces = set()
         if not self.__sync_loopbacks():
             self.logger.warning("Could not sync Loopbacks in VPP")
             ret = False
@@ -973,6 +975,8 @@ class Reconciler:
         if not self.__sync_admin_state():
             self.logger.warning("Could not sync interface adminstate in VPP")
             ret = False
+        # Clean up the activated_interfaces set
+        del self.activated_interfaces
         return ret
 
     def __sync_loopbacks(self):
@@ -1038,12 +1042,14 @@ class Reconciler:
                     self.cfg, member_ifname
                 )
                 member_vpp_iface = self.vpp.get_interface_by_name(member_ifname)
-                # NEW: Ensure member interface is up before adding to bond
+                # Ensure member interface is up before adding to bond
                 if member_vpp_iface and interface.get_admin_state(self.cfg, member_ifname) == 1:
                     if not (member_vpp_iface.flags & 1):  # IF_STATUS_API_FLAG_ADMIN_UP
                         cli = f"set interface state {member_ifname} up"
                         self.cli["sync"].append(cli)
-                # MODIFIED: Add member to bond after ensuring it's up
+                        # Track this interface as activated
+                        self.activated_interfaces.add(member_ifname)
+                # Add member to bond after ensuring it's up
                 if not member_ifname in vpp_members:
                     if (
                         len(vpp_members) == 0
@@ -1176,7 +1182,7 @@ class Reconciler:
             elif not vpp_rx_iface.sw_if_index in self.vpp.cache["l2xcs"]:
                 l2xc_changed = True
             elif (
-                not vpp_tx_iface.sw_if_index
+                not vpp_tx_if_index
                 == self.vpp.cache["l2xcs"][vpp_rx_iface.sw_if_index].tx_sw_if_index
             ):
                 l2xc_changed = True
@@ -1231,7 +1237,7 @@ class Reconciler:
                     if _iface:
                         vpp_mtu = _iface.mtu[0]
                     vpp_ifname, config_iface = interface.get_by_name(self.cfg, ifname)
-                    config_mtu = interface.get_mtu(self.cfg, ifname)
+                    config_mtu = interface.get_mtu(self.cfg, vpp_ifname)
 
                 if shrink and config_mtu < vpp_mtu:
                     cli = f"set interface mtu packet {int(config_mtu)} {vpp_ifname}"
@@ -1492,12 +1498,16 @@ class Reconciler:
                 config_admin_state = 1
             else:
                 vpp_ifname, _config_iface = interface.get_by_name(self.cfg, ifname)
-                config_admin_state = interface.get_admin_state(self.cfg, ifname)
+                config_admin_state = interface.get_admin_state(self.cfg, vpp_ifname)
 
             vpp_admin_state = 0
             _iface = self.vpp.get_interface_by_name(vpp_ifname)
             if _iface:
                 vpp_admin_state = _iface.flags & 1  # IF_STATUS_API_FLAG_ADMIN_UP
+
+            # Skip interfaces already activated in __sync_bondethernets
+            if vpp_ifname in getattr(self, 'activated_interfaces', set()):
+                continue
 
             if config_admin_state == vpp_admin_state:
                 continue
@@ -1532,15 +1542,13 @@ class Reconciler:
                 "comment { vppcfg: Planning failed, be careful with this output! }"
             )
 
-        # Emit the output list to stdout or a file
-        if outfile and outfile == "-":
-            file = sys.stdout
-            outfile = "(stdout)"
+        # Write the output
+        if outfile == "-":
+            for line in output:
+                print(line)
         else:
-            file = open(outfile, "w", encoding="utf-8")
-        if len(output) > 0:
-            print("\n".join(output), file=file)
-        if file is not sys.stdout:
-            file.close()
-
+            with open(outfile, "w") as fh:
+                for line in output:
+                    fh.write(f"{line}\n")
         self.logger.info(f"Wrote {len(output)} lines to {outfile}")
+        return True
